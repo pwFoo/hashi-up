@@ -19,6 +19,7 @@ func InstallNomadCommand() *cobra.Command {
 	var sshPort int
 	var local bool
 	var show bool
+	var binary string
 
 	var version string
 	var datacenter string
@@ -45,6 +46,7 @@ func InstallNomadCommand() *cobra.Command {
 	command.Flags().IntVar(&sshPort, "ssh-port", 22, "The port on which to connect for ssh")
 	command.Flags().BoolVar(&local, "local", false, "Running the installation locally, without ssh")
 	command.Flags().BoolVar(&show, "show", false, "Just show the generated config instead of deploying Consul")
+	command.Flags().StringVar(&binary, "binary", "", "Upload and use this Nomad binary instead of downloading")
 
 	command.Flags().StringVar(&version, "version", "", "Version of Nomad to install, default to latest available")
 	command.Flags().BoolVar(&server, "server", false, "Nomad: enables the server mode of the agent. (see Nomad documentation for more info)")
@@ -82,7 +84,7 @@ func InstallNomadCommand() *cobra.Command {
 			return nil
 		}
 
-		if len(version) == 0 {
+		if len(binary) == 0 && len(version) == 0 {
 			updateParams := &checkpoint.CheckParams{
 				Product: "nomad",
 				Version: "0.0.0",
@@ -122,6 +124,13 @@ func InstallNomadCommand() *cobra.Command {
 				err = op.UploadFile(keyFile, dir+"/nomad-agent-key.pem", "0640")
 				if err != nil {
 					return fmt.Errorf("error received during upload nomad key file: %s", err)
+				}
+			}
+
+			if len(binary) != 0 {
+				err = op.UploadFile(binary, dir+"/nomad", "0755")
+				if err != nil {
+					return fmt.Errorf("error received during upload nomad binary: %s", err)
 				}
 			}
 
@@ -229,27 +238,34 @@ has_apt_get() {
 }
 
 install_dependencies() {
-  if ! [ -x "$(command -v unzip)" ] || ! [ -x "$(command -v curl)" ]; then
-	  if $(has_apt_get); then
-		$SUDO apt-get update -y
-		$SUDO apt-get install -y curl unzip
-	  elif $(has_yum); then
-		$SUDO yum update -y
-		$SUDO yum install -y curl unzip
-	  else
-		fatal "Could not find apt-get or yum. Cannot install dependencies on this OS."
-		exit 1
+  if [ ! -x "${TMP_DIR}/nomad" ]; then
+	  if ! [ -x "$(command -v unzip)" ] || ! [ -x "$(command -v curl)" ]; then
+		  if $(has_apt_get); then
+			$SUDO apt-get update -y
+			$SUDO apt-get install -y curl unzip
+		  elif $(has_yum); then
+			$SUDO yum update -y
+			$SUDO yum install -y curl unzip
+		  else
+			fatal "Could not find apt-get or yum. Cannot install dependencies on this OS."
+			exit 1
+		  fi
 	  fi
   fi
 }
 
 download_and_install() {
-  if [ -x "${BIN_DIR}/nomad" ] && [ "$(${BIN_DIR}/nomad version | grep Nomad | cut -d' ' -f2)" = "v${NOMAD_VERSION}" ]; then
-    info "Nomad binary already installed in ${BIN_DIR}, skipping downloading and installing binary"
+  if [ -x "${TMP_DIR}/nomad" ]; then 
+	info "Installing uploaded Nomad binary"
+	$SUDO cp "${TMP_DIR}/nomad" $BIN_DIR
   else
-    info "Downloading and unpacking nomad_${NOMAD_VERSION}_linux_${SUFFIX}.zip"
-	curl -o "$TMP_DIR/nomad.zip" -sfL "https://releases.hashicorp.com/nomad/${NOMAD_VERSION}/nomad_${NOMAD_VERSION}_linux_${SUFFIX}.zip"
-    $SUDO unzip -qq -o "$TMP_DIR/nomad.zip" -d $BIN_DIR
+    if [ -x "${BIN_DIR}/nomad" ] && [ "$(${BIN_DIR}/nomad version | grep Nomad | cut -d' ' -f2)" = "v${NOMAD_VERSION}" ]; then
+      info "Nomad binary already installed in ${BIN_DIR}, skipping downloading and installing binary"
+    else
+	  info "Downloading and unpacking nomad_${NOMAD_VERSION}_linux_${SUFFIX}.zip"
+	  curl -o "$TMP_DIR/nomad.zip" -sfL "https://releases.hashicorp.com/nomad/${NOMAD_VERSION}/nomad_${NOMAD_VERSION}_linux_${SUFFIX}.zip"
+	  $SUDO unzip -qq -o "$TMP_DIR/nomad.zip" -d $BIN_DIR
+    fi
   fi
 }
 

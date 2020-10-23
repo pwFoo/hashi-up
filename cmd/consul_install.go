@@ -19,6 +19,7 @@ func InstallConsulCommand() *cobra.Command {
 	var sshPort int
 	var local bool
 	var show bool
+	var binary string
 
 	var version string
 	var datacenter string
@@ -47,6 +48,7 @@ func InstallConsulCommand() *cobra.Command {
 	command.Flags().IntVar(&sshPort, "ssh-port", 22, "The port on which to connect for ssh")
 	command.Flags().BoolVar(&local, "local", false, "Running the installation locally, without ssh")
 	command.Flags().BoolVar(&show, "show", false, "Just show the generated config instead of deploying Consul")
+	command.Flags().StringVar(&binary, "binary", "", "Upload and use this Nomad binary instead of downloading")
 
 	command.Flags().StringVar(&version, "version", "", "Version of Consul to install, default to latest available")
 	command.Flags().BoolVar(&server, "server", false, "Consul: switches agent to server mode. (see Consul documentation for more info)")
@@ -82,7 +84,7 @@ func InstallConsulCommand() *cobra.Command {
 			return nil
 		}
 
-		if len(version) == 0 {
+		if len(binary) == 0 && len(version) == 0 {
 			updateParams := &checkpoint.CheckParams{
 				Product: "consul",
 				Version: "0.0.0",
@@ -106,6 +108,13 @@ func InstallConsulCommand() *cobra.Command {
 			_, err := op.Execute("mkdir " + dir)
 			if err != nil {
 				return fmt.Errorf("error received during installation: %s", err)
+			}
+
+			if len(binary) != 0 {
+				err = op.UploadFile(binary, dir+"/consul", "0755")
+				if err != nil {
+					return fmt.Errorf("error received during upload consul binary: %s", err)
+				}
 			}
 
 			if enableTLS {
@@ -234,27 +243,34 @@ has_apt_get() {
 }
 
 install_dependencies() {
-  if ! [ -x "$(command -v unzip)" ] || ! [ -x "$(command -v curl)" ]; then
-	  if $(has_apt_get); then
-		$SUDO apt-get update -y
-		$SUDO apt-get install -y curl unzip
-	  elif $(has_yum); then
-		$SUDO yum update -y
-		$SUDO yum install -y curl unzip
-	  else
-		fatal "Could not find apt-get or yum. Cannot install dependencies on this OS."
-		exit 1
-	  fi
+  if [ ! -x "${TMP_DIR}/consul" ]; then
+    if ! [ -x "$(command -v unzip)" ] || ! [ -x "$(command -v curl)" ]; then
+	    if $(has_apt_get); then
+	  	  $SUDO apt-get update -y
+	  	  $SUDO apt-get install -y curl unzip
+	    elif $(has_yum); then
+		  $SUDO yum update -y
+		  $SUDO yum install -y curl unzip
+	    else
+		  fatal "Could not find apt-get or yum. Cannot install dependencies on this OS."
+		  exit 1
+	    fi
+    fi
   fi
 }
 
 download_and_install() {
-  if [ -x "${BIN_DIR}/consul" ] && [ "$(${BIN_DIR}/consul version | grep Consul | cut -d' ' -f2)" = "v${CONSUL_VERSION}" ]; then
-    info "Consul binary already installed in ${BIN_DIR}, skipping downloading and installing binary"
+  if [ -x "${TMP_DIR}/consul" ]; then 
+	info "Installing uploaded Consul binary"
+	$SUDO cp "${TMP_DIR}/consul" $BIN_DIR
   else
-    info "Downloading and unpacking consul_${CONSUL_VERSION}_linux_${SUFFIX}.zip"
-	curl -o "$TMP_DIR/consul.zip" -sfL "https://releases.hashicorp.com/consul/${CONSUL_VERSION}/consul_${CONSUL_VERSION}_linux_${SUFFIX}.zip"
-    $SUDO unzip -qq -o "$TMP_DIR/consul.zip" -d $BIN_DIR
+    if [ -x "${BIN_DIR}/consul" ] && [ "$(${BIN_DIR}/consul version | grep Consul | cut -d' ' -f2)" = "v${CONSUL_VERSION}" ]; then
+      info "Consul binary already installed in ${BIN_DIR}, skipping downloading and installing binary"
+    else
+      info "Downloading and unpacking consul_${CONSUL_VERSION}_linux_${SUFFIX}.zip"
+	  curl -o "$TMP_DIR/consul.zip" -sfL "https://releases.hashicorp.com/consul/${CONSUL_VERSION}/consul_${CONSUL_VERSION}_linux_${SUFFIX}.zip"
+      $SUDO unzip -qq -o "$TMP_DIR/consul.zip" -d $BIN_DIR
+    fi
   fi
 }
 
